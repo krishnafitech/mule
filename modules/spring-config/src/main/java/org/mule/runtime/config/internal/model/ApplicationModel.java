@@ -289,10 +289,10 @@ public class ApplicationModel implements ArtifactAst {
           .build();
 
   private final Optional<ComponentBuildingDefinitionRegistry> componentBuildingDefinitionRegistry;
-  private final ExtensionModelHelper extensionModelHelper;
   private final List<ComponentModel> muleComponentModels = new LinkedList<>();
   private PropertiesResolverConfigurationProperties configurationProperties;
   private final ResourceProvider externalResourceProvider;
+  private final ExtensionModelHelper extensionModelHelper;
   private final Map<String, ComponentModel> namedComponentModels = new HashMap<>();
   private final Map<String, ComponentModel> namedTopLevelComponentModels = new HashMap<>();
 
@@ -309,7 +309,7 @@ public class ApplicationModel implements ArtifactAst {
                           ResourceProvider externalResourceProvider)
       throws Exception {
     this(artifactConfig, artifactDeclaration, emptySet(), emptyMap(), empty(), of(new ComponentBuildingDefinitionRegistry()),
-         true, externalResourceProvider);
+         externalResourceProvider);
   }
 
   /**
@@ -324,7 +324,6 @@ public class ApplicationModel implements ArtifactAst {
    *        will receive the domain resolver.
    * @param componentBuildingDefinitionRegistry an optional {@link ComponentBuildingDefinitionRegistry} used to correlate items in
    *        this model to their definitions
-   * @param runtimeMode true implies the mule application should behave as a runtime app (e.g.: smart connectors will be macro
    *        expanded) false implies the mule is being created from a tooling perspective.
    * @param externalResourceProvider the provider for configuration properties files and ${file::name.txt} placeholders
    * @throws Exception when the application configuration has semantic errors.
@@ -335,7 +334,7 @@ public class ApplicationModel implements ArtifactAst {
                           Map<String, String> deploymentProperties,
                           Optional<ConfigurationProperties> parentConfigurationProperties,
                           Optional<ComponentBuildingDefinitionRegistry> componentBuildingDefinitionRegistry,
-                          boolean runtimeMode, ResourceProvider externalResourceProvider)
+                          ResourceProvider externalResourceProvider)
       throws Exception {
 
     this.componentBuildingDefinitionRegistry = componentBuildingDefinitionRegistry;
@@ -347,23 +346,25 @@ public class ApplicationModel implements ArtifactAst {
     createEffectiveModel();
     indexComponentModels();
     validateModel(componentBuildingDefinitionRegistry);
-    this.extensionModelHelper = new ExtensionModelHelper(extensionModels);
-
     // TODO MULE-13894 do this only on runtimeMode=true once unified extensionModel names to use camelCase (see smart connectors
     // and crafted declared extension models)
     resolveComponentTypes();
+    extensionModelHelper = new ExtensionModelHelper(extensionModels);
     muleComponentModels.forEach(componentModel -> componentModel.resolveTypedComponentIdentifier(extensionModelHelper));
+    executeOnEveryMuleComponentTree(componentModel -> new ComponentLocationVisitor().accept(componentModel));
 
-    if (runtimeMode) {
-      expandModules(extensionModels, () -> {
-        // TODO MULE-13894 do this only on runtimeMode=true once unified extensionModel names to use camelCase (see smart
-        // connectors and crafted declared extension models)
-        resolveComponentTypes();
-        muleComponentModels.forEach(componentModel -> componentModel.resolveTypedComponentIdentifier(extensionModelHelper));
-      });
-      // Have to index again the component models with macro expanded ones
-      indexComponentModels();
-    }
+    muleComponentModels.forEach(componentModel -> componentModel.resolveTypedComponentIdentifier(extensionModelHelper));
+  }
+
+  public void macroExpandXmlSdkComponents(Set<ExtensionModel> extensionModels) {
+    expandModules(extensionModels, () -> {
+      // TODO MULE-13894 do this only on runtimeMode=true once unified extensionModel names to use camelCase (see smart
+      // connectors and crafted declared extension models)
+      resolveComponentTypes();
+      muleComponentModels.forEach(componentModel -> componentModel.resolveTypedComponentIdentifier(extensionModelHelper));
+    });
+    // Have to index again the component models with macro expanded ones
+    indexComponentModels();
 
     executeOnEveryMuleComponentTree(componentModel -> new ComponentLocationVisitor().accept(componentModel));
   }
@@ -1136,7 +1137,7 @@ public class ApplicationModel implements ArtifactAst {
   private void resolveRegistrationNames() {
     executeOnEveryRootElementWithBuildingDefinition((componentModel, componentBuildingDefinition) -> {
       if (componentBuildingDefinition.getRegistrationName() != null) {
-        componentModel.setParameter(ApplicationModel.NAME_ATTRIBUTE, componentBuildingDefinition.getRegistrationName());
+        componentModel.setParameter(NAME_ATTRIBUTE, componentBuildingDefinition.getRegistrationName());
       }
     });
   }
@@ -1157,8 +1158,7 @@ public class ApplicationModel implements ArtifactAst {
 
   @Override
   public Stream<ComponentAst> recursiveStream() {
-    return muleComponentModels.stream()
-        .map(cm -> (ComponentAst) cm)
+    return topLevelComponentsStream()
         .flatMap(cm -> cm.recursiveStream());
   }
 
