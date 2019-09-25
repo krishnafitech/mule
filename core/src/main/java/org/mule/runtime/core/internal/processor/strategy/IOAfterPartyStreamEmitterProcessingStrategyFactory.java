@@ -11,11 +11,13 @@ import static java.lang.Thread.currentThread;
 import static java.util.Objects.requireNonNull;
 import static org.mule.runtime.api.i18n.I18nMessageFactory.createStaticMessage;
 import static org.mule.runtime.core.api.processor.ReactiveProcessor.ProcessingType.BLOCKING;
+import static org.mule.runtime.core.api.processor.ReactiveProcessor.ProcessingType.CPU_LITE_ASYNC;
 import static org.mule.runtime.core.api.transaction.TransactionCoordination.isTransactionActive;
 import static reactor.core.publisher.Flux.from;
 import static reactor.core.publisher.FluxSink.OverflowStrategy.BUFFER;
 import static reactor.core.scheduler.Schedulers.fromExecutorService;
 
+import org.mule.runtime.api.exception.MuleException;
 import org.mule.runtime.api.exception.MuleRuntimeException;
 import org.mule.runtime.api.scheduler.Scheduler;
 import org.mule.runtime.api.scheduler.SchedulerService;
@@ -56,19 +58,21 @@ public class IOAfterPartyStreamEmitterProcessingStrategyFactory extends ReactorS
   public ProcessingStrategy create(MuleContext muleContext, String schedulersNamePrefix) {
     return new IOAfterPartyStreamEmitterProcessingStrategy(getBufferSize(),
                                                            getSubscriberCount(),
-                                                           getNonBlockingAfterPartyScheduler(muleContext, schedulersNamePrefix),
+                                                           getCpuLightSchedulerSupplier(muleContext, schedulersNamePrefix),
+                                                           getAfterPartySchedulerSupplier(muleContext, schedulersNamePrefix),
                                                            resolveParallelism(),
                                                            getMaxConcurrency(),
                                                            isMaxConcurrencyEagerCheck(),
                                                            muleContext.getConfiguration().isThreadLoggingEnabled());
   }
 
-  private Supplier<Scheduler> getNonBlockingAfterPartyScheduler(MuleContext muleContext, String schedulersNamePrefix) {
-    return () -> muleContext.getSchedulerService().ioScheduler(muleContext.getSchedulerBaseConfig()
-        .withName(schedulersNamePrefix + "." + BLOCKING.name())
-        .withMaxConcurrentTasks(CORES * 2));
+  private Supplier<Scheduler> getAfterPartySchedulerSupplier(MuleContext muleContext, String schedulersNamePrefix) {
+    return () -> muleContext.getSchedulerService().ioScheduler(
+                                                               muleContext.getSchedulerBaseConfig()
+                                                                   .withName(schedulersNamePrefix + ".nb.callback."
+                                                                       + BLOCKING.name())
+                                                                   .withMaxConcurrentTasks(CORES * 2));
   }
-
 
   @Override
   protected int resolveParallelism() {
@@ -84,24 +88,35 @@ public class IOAfterPartyStreamEmitterProcessingStrategyFactory extends ReactorS
 
     private final int bufferSize;
     private final boolean isThreadLoggingEnabled;
+    private final Supplier<Scheduler> afterPartySchedulerSupplier;
+
+    private Scheduler afterPartyScheduler;
 
     public IOAfterPartyStreamEmitterProcessingStrategy(int bufferSize,
                                                        int subscriberCount,
                                                        Supplier<Scheduler> blockingSchedulerSupplier,
+                                                       Supplier<Scheduler> afterPartySchedulerSupplier,
                                                        int parallelism,
                                                        int maxConcurrency, boolean maxConcurrencyEagerCheck,
                                                        boolean isThreadLoggingEnabled) {
       super(subscriberCount, blockingSchedulerSupplier, parallelism, maxConcurrency, maxConcurrencyEagerCheck);
       this.bufferSize = requireNonNull(bufferSize);
       this.isThreadLoggingEnabled = isThreadLoggingEnabled;
+      this.afterPartySchedulerSupplier = afterPartySchedulerSupplier;
     }
 
-    public IOAfterPartyStreamEmitterProcessingStrategy(int bufferSize,
-                                                       int subscriberCount,
-                                                       Supplier<Scheduler> blockingSchedulerSupplier,
-                                                       int parallelism,
-                                                       int maxConcurrency, boolean maxConcurrencyEagerCheck) {
-      this(bufferSize, subscriberCount, blockingSchedulerSupplier, parallelism, maxConcurrency, maxConcurrencyEagerCheck, false);
+    @Override
+    public void start() throws MuleException {
+      super.start();
+      afterPartyScheduler = afterPartySchedulerSupplier.get();
+    }
+
+    @Override
+    public void stop() throws MuleException {
+      super.stop();
+      if (afterPartyScheduler != null) {
+        afterPartyScheduler.stop();
+      }
     }
 
     @Override
@@ -145,13 +160,29 @@ public class IOAfterPartyStreamEmitterProcessingStrategyFactory extends ReactorS
 
     @Override
     public ReactiveProcessor onProcessor(ReactiveProcessor processor) {
-      return super.onProcessor(processor);
+      reactor.core.scheduler.Scheduler cpuLiteScheduler = fromExecutorService(decorateScheduler(afterPartyScheduler));
+      if (processor.getProcessingType() == CPU_LITE_ASYNC) {
+        return onNonBlockingProcessorTxAware(publisher -> from(publisher)
+            .transform(processor)
+            .publishOn(cpuLiteScheduler)
+            .subscriberContext(ctx -> ctx.put(PROCESSOR_SCHEDULER_CONTEXT_KEY, getCpuLightScheduler())));
+      } else {
+        return publisher -> from(publisher)
+            .transform(processor)
+            .subscriberContext(ctx -> ctx.put(PROCESSOR_SCHEDULER_CONTEXT_KEY, getCpuLightScheduler()));
+      }
+    }
+
+    @Override
+    protected Scheduler getCpuLightScheduler() {
+      return super.getCpuLightScheduler();
     }
 
     private int getBufferQueueSize() {
       return bufferSize / (maxConcurrency < CORES ? maxConcurrency : CORES);
     }
   }
+
 
   static class RoundRobinReactorSink<E> implements AbstractProcessingStrategy.ReactorSink<E> {
 
