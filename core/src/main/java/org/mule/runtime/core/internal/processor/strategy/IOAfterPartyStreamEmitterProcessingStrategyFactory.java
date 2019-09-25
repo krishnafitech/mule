@@ -160,7 +160,8 @@ public class IOAfterPartyStreamEmitterProcessingStrategyFactory extends ReactorS
 
     @Override
     public ReactiveProcessor onProcessor(ReactiveProcessor processor) {
-      reactor.core.scheduler.Scheduler cpuLiteScheduler = fromExecutorService(decorateScheduler(afterPartyScheduler));
+      //reactor.core.scheduler.Scheduler cpuLiteScheduler = fromExecutorService(decorateScheduler(afterPartyScheduler));
+      reactor.core.scheduler.Scheduler cpuLiteScheduler = fromExecutorService(decorateScheduler(getCpuLightScheduler()));
       if (processor.getProcessingType() == CPU_LITE_ASYNC) {
         return onNonBlockingProcessorTxAware(publisher -> from(publisher)
             .transform(processor)
