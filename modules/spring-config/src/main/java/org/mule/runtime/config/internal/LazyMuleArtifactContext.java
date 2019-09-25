@@ -7,7 +7,9 @@
 package org.mule.runtime.config.internal;
 
 import static com.google.common.collect.ImmutableList.copyOf;
+import static com.google.common.collect.Sets.newHashSet;
 import static java.util.Arrays.asList;
+import static java.util.Collections.emptyList;
 import static java.util.Optional.empty;
 import static java.util.Optional.of;
 import static java.util.stream.Collectors.toCollection;
@@ -75,6 +77,7 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
@@ -84,7 +87,9 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
+import com.google.common.collect.ImmutableSet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.BeansException;
@@ -111,6 +116,9 @@ public class LazyMuleArtifactContext extends MuleArtifactContext
   private final Optional<ComponentModelInitializer> parentComponentModelInitializer;
 
   private final ArtifactAstDependencyGraph graph;
+
+  private Set<String> currentComponentLocationsCreated = new HashSet<>();
+  private boolean appliedStartedPhase = false;
 
   /**
    * Parses configuration files creating a spring ApplicationContext which is used as a parent registry using the SpringRegistry
@@ -272,7 +280,8 @@ public class LazyMuleArtifactContext extends MuleArtifactContext
 
   @Override
   public void initializeComponent(Location location, boolean applyStartPhase) {
-    applyLifecycle(createComponents(empty(), of(location), getParentComponentModelInitializerAdapter(applyStartPhase)),
+    applyLifecycle(createComponents(empty(), of(location), applyStartPhase,
+                                    getParentComponentModelInitializerAdapter(applyStartPhase)),
                    applyStartPhase);
   }
 
@@ -284,13 +293,13 @@ public class LazyMuleArtifactContext extends MuleArtifactContext
         return filter.accept(componentModel.getComponentLocation());
       }
       return false;
-    }), empty(), getParentComponentModelInitializerAdapter(applyStartPhase)), applyStartPhase);
+    }), empty(), applyStartPhase, getParentComponentModelInitializerAdapter(applyStartPhase)), applyStartPhase);
   }
 
   @Override
   public void initializeComponents(Predicate<ComponentAst> componentModelPredicate,
                                    boolean applyStartPhase) {
-    applyLifecycle(createComponents(of(componentModelPredicate), empty(),
+    applyLifecycle(createComponents(of(componentModelPredicate), empty(), applyStartPhase,
                                     getParentComponentModelInitializerAdapter(applyStartPhase)),
                    applyStartPhase);
   }
@@ -303,19 +312,11 @@ public class LazyMuleArtifactContext extends MuleArtifactContext
   }
 
   private List<Object> createComponents(Optional<Predicate<ComponentAst>> predicateOptional, Optional<Location> locationOptional,
+                                        boolean applyStartPhase,
                                         Optional<ComponentModelInitializerAdapter> parentComponentModelInitializerAdapter) {
+    //TODO: rodro: parentComponentModelInitializerAdapter is not used, it used to be called to initialize components missed here and present in domain
     checkState(predicateOptional.isPresent() != locationOptional.isPresent(), "predicate or location has to be passed");
     return withContextClassLoader(muleContext.getExecutionClassLoader(), () -> {
-      // First unregister any already initialized/started component
-      unregisterBeans(beansCreated);
-      // Clean up resources...
-      beansCreated.clear();
-      objectProviders.clear();
-      resetMuleSecurityManager();
-
-      // Force initialization of configuration component...
-      resetMuleConfiguration();
-
       // User input components to be initialized...
       final Predicate<ComponentAst> basePredicate =
           predicateOptional.orElseGet(() -> comp -> comp.getLocation() != null &&
@@ -345,6 +346,19 @@ public class LazyMuleArtifactContext extends MuleArtifactContext
         });
       };
 
+      Set<String> requestedLocations = locationOptional.map(location -> (Set<String>) newHashSet(location.toString()))
+          .orElseGet(() -> applicationModel.recursiveStream()
+              .filter(basePredicate)
+              .filter(comp -> comp.getLocation() != null)
+              .map(comp -> comp.getLocation().getLocation())
+              .collect(Collectors.toSet()));
+
+      if (ImmutableSet.copyOf(currentComponentLocationsCreated).equals(ImmutableSet.copyOf(requestedLocations)) &&
+          appliedStartedPhase == applyStartPhase) {
+        // Same minimalApplication has been requested, so we don't need to recreate the same beans.
+        return emptyList();
+      }
+
       // final ArtifactAst minimalApplicationModel = graph.minimalArtifactFor(basePredicate
       ArtifactAst minimalApplicationModel = graph.minimalArtifactFor(basePredicate
           .or(txManagerPredicate)
@@ -360,6 +374,19 @@ public class LazyMuleArtifactContext extends MuleArtifactContext
               + locationOptional.get().toString()));
         }
       }
+
+      // Force initialization of configuration component...
+      resetMuleConfiguration();
+
+      // First unregister any already initialized/started component
+      unregisterBeans(beansCreated);
+      // Clean up resources...
+      currentComponentLocationsCreated.clear();
+      currentComponentLocationsCreated.addAll(requestedLocations);
+      appliedStartedPhase = applyStartPhase;
+      beansCreated.clear();
+      objectProviders.clear();
+      resetMuleSecurityManager();
 
       List<String> applicationComponents =
           createApplicationComponents((DefaultListableBeanFactory) this.getBeanFactory(), minimalApplicationModel, false);
