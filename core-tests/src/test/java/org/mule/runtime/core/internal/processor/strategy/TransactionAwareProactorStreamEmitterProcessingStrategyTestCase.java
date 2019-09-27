@@ -91,7 +91,7 @@ public class TransactionAwareProactorStreamEmitterProcessingStrategyTestCase
                                                     () -> cpuIntensive,
                                                     maxConcurrency,
                                                     maxConcurrency,
-                                                    false,
+                                                    true,
                                                     false));
   }
 

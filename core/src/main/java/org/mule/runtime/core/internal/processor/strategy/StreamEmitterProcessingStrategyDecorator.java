@@ -23,83 +23,83 @@ import java.util.function.Supplier;
 
 public abstract class StreamEmitterProcessingStrategyDecorator extends StreamEmitterProcessingStrategy {
 
-  private StreamEmitterProcessingStrategy delegtate;
+  protected final StreamEmitterProcessingStrategy delegate;
 
   public StreamEmitterProcessingStrategyDecorator(StreamEmitterProcessingStrategy delegate) {
     super(1, 1, () -> null, 1, 1, false);
-    this.delegtate = delegate;
+    this.delegate = delegate;
   }
 
   @Override
   public Sink createSink(FlowConstruct flowConstruct, ReactiveProcessor function) {
-    return delegtate.createSink(flowConstruct, function);
+    return delegate.createSink(flowConstruct, function);
   }
 
   @Override
   public ReactiveProcessor onPipeline(ReactiveProcessor pipeline) {
-    return delegtate.onPipeline(pipeline);
+    return delegate.onPipeline(pipeline);
   }
 
   @Override
   public Scheduler getFlowDispatcherScheduler() {
-    return delegtate.getFlowDispatcherScheduler();
+    return delegate.getFlowDispatcherScheduler();
   }
 
   @Override
   public int getBufferQueueSize() {
-    return delegtate.getBufferQueueSize();
+    return delegate.getBufferQueueSize();
   }
 
   @Override
   public ReactiveProcessor onProcessor(
                                        ReactiveProcessor processor) {
-    return delegtate.onProcessor(processor);
+    return delegate.onProcessor(processor);
   }
 
   @Override
   public ReactiveProcessor onNonBlockingProcessorTxAware(ReactiveProcessor processor) {
-    return delegtate.onNonBlockingProcessorTxAware(processor);
+    return delegate.onNonBlockingProcessorTxAware(processor);
   }
 
   @Override
   public void checkBackpressureAccepting(CoreEvent event) throws RejectedExecutionException {
-    delegtate.checkBackpressureAccepting(event);
+    delegate.checkBackpressureAccepting(event);
   }
 
   @Override
   public BackPressureReason checkBackpressureEmitting(
                                                       CoreEvent event) {
-    return delegtate.checkBackpressureEmitting(event);
+    return delegate.checkBackpressureEmitting(event);
   }
 
   @Override
   public BackPressureReason checkCapacity(CoreEvent event) {
-    return delegtate.checkCapacity(event);
+    return delegate.checkCapacity(event);
   }
 
   @Override
   public int getParallelism() {
-    return delegtate.getParallelism();
+    return delegate.getParallelism();
   }
 
   @Override
   public void start() throws MuleException {
-    delegtate.start();
+    delegate.start();
   }
 
   @Override
   public Scheduler createCpuLightScheduler(Supplier<Scheduler> cpuLightSchedulerSupplier) {
-    return delegtate.createCpuLightScheduler(cpuLightSchedulerSupplier);
+    return delegate.createCpuLightScheduler(cpuLightSchedulerSupplier);
   }
 
   @Override
   public void stop() throws MuleException {
-    delegtate.stop();
+    delegate.stop();
   }
 
   @Override
   public Scheduler getCpuLightScheduler() {
-    return delegtate.getCpuLightScheduler();
+    return delegate.getCpuLightScheduler();
   }
 
   @Override
@@ -107,26 +107,26 @@ public abstract class StreamEmitterProcessingStrategyDecorator extends StreamEmi
                                          long shutdownTimeout,
                                          CountDownLatch completionLatch,
                                          long startMillis) {
-    delegtate.awaitSubscribersCompletion(flowConstruct, shutdownTimeout, completionLatch, startMillis);
+    delegate.awaitSubscribersCompletion(flowConstruct, shutdownTimeout, completionLatch, startMillis);
   }
 
   @Override
   public Consumer<CoreEvent> createOnEventConsumer() {
-    return delegtate.createOnEventConsumer();
+    return delegate.createOnEventConsumer();
   }
 
   @Override
   public ScheduledExecutorService decorateScheduler(ScheduledExecutorService scheduler) {
-    return delegtate.decorateScheduler(scheduler);
+    return delegate.decorateScheduler(scheduler);
   }
 
   @Override
   public boolean isSchedulerBusy(Throwable t) {
-    return delegtate.isSchedulerBusy(t);
+    return delegate.isSchedulerBusy(t);
   }
 
   @Override
   public boolean isSynchronous() {
-    return delegtate.isSynchronous();
+    return delegate.isSynchronous();
   }
 }

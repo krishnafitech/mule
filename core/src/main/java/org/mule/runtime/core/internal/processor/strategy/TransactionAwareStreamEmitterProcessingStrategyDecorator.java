@@ -30,9 +30,9 @@ public class TransactionAwareStreamEmitterProcessingStrategyDecorator extends St
 
   @Override
   public Sink createSink(FlowConstruct flowConstruct, ReactiveProcessor pipeline) {
-    Sink proactorSink = super.createSink(flowConstruct, pipeline);
+    Sink delegateSink = delegate.createSink(flowConstruct, pipeline);
     Sink syncSink = new StreamPerThreadSink(pipeline, createOnEventConsumer(), flowConstruct);
-    return new TransactionalDelegateSink(syncSink, proactorSink);
+    return new TransactionalDelegateSink(syncSink, delegateSink);
   }
 
   @Override
@@ -53,26 +53,26 @@ public class TransactionAwareStreamEmitterProcessingStrategyDecorator extends St
           .flatMap(event -> just(event)
               .transform(isTransactionActive() ? BLOCKING_PROCESSING_STRATEGY_INSTANCE.onProcessor(processor) : processor));
     } else {
-      return super.onNonBlockingProcessorTxAware(processor);
+      return delegate.onNonBlockingProcessorTxAware(processor);
     }
-
   }
 
   @Override
   public ScheduledExecutorService decorateScheduler(ScheduledExecutorService scheduler) {
-    return new ConditionalExecutorServiceDecorator(super.decorateScheduler(scheduler),
+    return new ConditionalExecutorServiceDecorator(delegate.decorateScheduler(scheduler),
                                                    currentScheduler -> isTransactionActive());
   }
 
   @Override
   public ReactiveProcessor onPipeline(ReactiveProcessor pipeline) {
     return !LAZY_TX_CHECK && isTransactionActive() ? BLOCKING_PROCESSING_STRATEGY_INSTANCE.onPipeline(pipeline)
-        : super.onPipeline(pipeline);
+        : delegate.onPipeline(pipeline);
   }
 
   @Override
   public ReactiveProcessor onProcessor(ReactiveProcessor processor) {
-    return !LAZY_TX_CHECK && isTransactionActive() ? BLOCKING_PROCESSING_STRATEGY_INSTANCE.onProcessor(processor)
-        : super.onProcessor(processor);
+    return !LAZY_TX_CHECK && isTransactionActive()
+        ? BLOCKING_PROCESSING_STRATEGY_INSTANCE.onProcessor(processor)
+        : delegate.onProcessor(processor);
   }
 }
