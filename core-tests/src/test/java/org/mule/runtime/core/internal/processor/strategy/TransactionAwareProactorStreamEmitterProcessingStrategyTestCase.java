@@ -20,10 +20,11 @@ import static org.mule.tck.util.MuleContextUtils.getNotificationDispatcher;
 import static org.mule.test.allure.AllureConstants.ProcessingStrategiesFeature.PROCESSING_STRATEGIES;
 import static org.mule.test.allure.AllureConstants.ProcessingStrategiesFeature.ProcessingStrategiesStory.DEFAULT;
 import static reactor.util.concurrent.Queues.XS_BUFFER_SIZE;
+
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.processor.strategy.ProcessingStrategy;
 import org.mule.runtime.core.internal.processor.strategy.AbstractProcessingStrategyTestCase.TransactionAwareProcessingStrategyTestCase;
-import org.mule.runtime.core.internal.processor.strategy.TransactionAwareProactorStreamEmitterProcessingStrategyFactory.TransactionAwareProactorStreamEmitterProcessingStrategy;
+import org.mule.runtime.core.internal.processor.strategy.ProactorStreamEmitterProcessingStrategyFactory.ProactorStreamEmitterProcessingStrategy;
 import org.mule.tck.junit4.rule.SystemProperty;
 import org.mule.tck.testmodels.mule.TestTransaction;
 
@@ -67,28 +68,37 @@ public class TransactionAwareProactorStreamEmitterProcessingStrategyTestCase
 
   @Override
   protected ProcessingStrategy createProcessingStrategy(MuleContext muleContext, String schedulersNamePrefix) {
-    return new TransactionAwareProactorStreamEmitterProcessingStrategy(XS_BUFFER_SIZE,
-                                                                       2,
-                                                                       () -> cpuLight,
-                                                                       () -> blocking,
-                                                                       () -> cpuIntensive,
-                                                                       MAX_VALUE, true);
+    return new TransactionAwareStreamEmitterProcessingStrategyDecorator(
+        new ProactorStreamEmitterProcessingStrategy(XS_BUFFER_SIZE,
+                                                    2,
+                                                    () -> cpuLight,
+                                                    () -> blocking,
+                                                    () -> cpuIntensive,
+                                                    MAX_VALUE,
+                                                    MAX_VALUE,
+                                                    false,
+                                                    false));
   }
 
   @Override
   protected ProcessingStrategy createProcessingStrategy(MuleContext muleContext, String schedulersNamePrefix,
                                                         int maxConcurrency) {
-    return new TransactionAwareProactorStreamEmitterProcessingStrategy(XS_BUFFER_SIZE,
-                                                                       2,
-                                                                       () -> cpuLight,
-                                                                       () -> blocking,
-                                                                       () -> cpuIntensive,
-                                                                       maxConcurrency, true);
+    return new TransactionAwareStreamEmitterProcessingStrategyDecorator(
+        new ProactorStreamEmitterProcessingStrategy(XS_BUFFER_SIZE,
+                                                    2,
+                                                    () -> cpuLight,
+                                                    () -> blocking,
+                                                    () -> cpuIntensive,
+                                                    maxConcurrency,
+                                                    maxConcurrency,
+                                                    false,
+                                                    false));
   }
 
   @Override
-  @Description("Unlike with the MultiReactorProcessingStrategy, the TransactionAwareEmitterProcessingStrategy does not fail if a transaction "
-      + "is active, but rather executes these events synchronously in the caller thread transparently.")
+  @Description(
+      "Unlike with the MultiReactorProcessingStrategy, the TransactionAwareEmitterProcessingStrategy does not fail if a transaction "
+          + "is active, but rather executes these events synchronously in the caller thread transparently.")
   public void tx() throws Exception {
     flow = flowBuilder.get().processors(cpuLightProcessor, cpuIntensiveProcessor, blockingProcessor).build();
     flow.initialise();

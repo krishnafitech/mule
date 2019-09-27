@@ -129,7 +129,9 @@ public class ProactorStreamEmitterProcessingStrategyTestCase extends AbstractPro
                                                        () -> blocking,
                                                        () -> cpuIntensive,
                                                        CORES,
-                                                       maxConcurrency, true);
+                                                       maxConcurrency,
+                                                       true,
+                                                       false);
   }
 
   @Override
@@ -285,7 +287,9 @@ public class ProactorStreamEmitterProcessingStrategyTestCase extends AbstractPro
                                                                                                     () -> rejectingSchedulerSpy,
                                                                                                     () -> cpuIntensive,
                                                                                                     1,
-                                                                                                    2, true))
+                                                                                                    2,
+                                                                                                    true,
+                                                                                                    false))
         .build();
     flow.initialise();
     flow.start();
@@ -321,7 +325,9 @@ public class ProactorStreamEmitterProcessingStrategyTestCase extends AbstractPro
                                                                                                     () -> blocking,
                                                                                                     () -> rejectingSchedulerSpy,
                                                                                                     1,
-                                                                                                    2, true))
+                                                                                                    2,
+                                                                                                    true,
+                                                                                                    false))
         .build();
     flow.initialise();
     flow.start();
@@ -355,7 +361,9 @@ public class ProactorStreamEmitterProcessingStrategyTestCase extends AbstractPro
                                                                                                     () -> blocking,
                                                                                                     () -> cpuIntensive,
                                                                                                     CORES,
-                                                                                                    1, true)),
+                                                                                                    1,
+                                                                                                    true,
+                                                                                                    false)),
                        true, CPU_LITE, 1);
     assertThat(threads, hasSize(1));
     assertThat(threads, hasItem(startsWith(CPU_LIGHT)));
@@ -374,7 +382,9 @@ public class ProactorStreamEmitterProcessingStrategyTestCase extends AbstractPro
                                                                                                     () -> blocking,
                                                                                                     () -> cpuIntensive,
                                                                                                     CORES,
-                                                                                                    2, true)),
+                                                                                                    2,
+                                                                                                    true,
+                                                                                                    false)),
                        true, CPU_LITE, 2);
     assertThat(threads, hasSize(2));
     assertThat(threads, not(hasItem(startsWith(IO))));
@@ -395,7 +405,9 @@ public class ProactorStreamEmitterProcessingStrategyTestCase extends AbstractPro
                                                                                                     () -> blocking,
                                                                                                     () -> cpuIntensive,
                                                                                                     CORES,
-                                                                                                    1, true)),
+                                                                                                    1,
+                                                                                                    true,
+                                                                                                    false)),
                        true, BLOCKING, 1);
     assertThat(threads, hasSize(1));
     assertThat(threads.stream().filter(name -> name.startsWith(IO)).count(), equalTo(1l));
@@ -416,7 +428,9 @@ public class ProactorStreamEmitterProcessingStrategyTestCase extends AbstractPro
                                                                                                     () -> blocking,
                                                                                                     () -> cpuIntensive,
                                                                                                     1,
-                                                                                                    2, true)),
+                                                                                                    2,
+                                                                                                    true,
+                                                                                                    false)),
                        true, BLOCKING, 2);
     assertThat(threads, hasSize(2));
     // assertThat(threads.stream().filter(name -> name.startsWith(IO)).count(), equalTo(2l));
@@ -463,7 +477,9 @@ public class ProactorStreamEmitterProcessingStrategyTestCase extends AbstractPro
                                                                                                     () -> blocking,
                                                                                                     () -> cpuIntensive,
                                                                                                     4,
-                                                                                                    2, true))
+                                                                                                    2,
+                                                                                                    true,
+                                                                                                    false))
         .processors(blockingProcessor)
         .build();
     flow.initialise();
@@ -696,7 +712,9 @@ public class ProactorStreamEmitterProcessingStrategyTestCase extends AbstractPro
                                                                                                     () -> blocking,
                                                                                                     () -> cpuIntensive,
                                                                                                     4,
-                                                                                                    2, true))
+                                                                                                    2,
+                                                                                                    true,
+                                                                                                    false))
         .source(triggerableMessageSource)
         .processors(cpuLightProcessor, cpuIntensiveProcessor).build();
     flow.initialise();

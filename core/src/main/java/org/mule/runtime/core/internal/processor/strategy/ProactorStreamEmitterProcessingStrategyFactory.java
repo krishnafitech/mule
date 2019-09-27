@@ -9,12 +9,9 @@ package org.mule.runtime.core.internal.processor.strategy;
 import static java.lang.Integer.MAX_VALUE;
 import static java.lang.Long.MIN_VALUE;
 import static java.lang.Math.max;
-import static java.lang.System.currentTimeMillis;
 import static java.lang.System.nanoTime;
-import static java.lang.Thread.currentThread;
 import static java.time.Duration.ofMillis;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
-import static org.mule.runtime.api.i18n.I18nMessageFactory.createStaticMessage;
 import static org.mule.runtime.core.api.construct.BackPressureReason.REQUIRED_SCHEDULER_BUSY;
 import static org.mule.runtime.core.api.construct.BackPressureReason.REQUIRED_SCHEDULER_BUSY_WITH_FULL_BUFFER;
 import static org.mule.runtime.core.api.processor.ReactiveProcessor.ProcessingType.BLOCKING;
@@ -23,42 +20,47 @@ import static org.mule.runtime.core.api.processor.ReactiveProcessor.ProcessingTy
 import static org.mule.runtime.core.internal.context.thread.notification.ThreadNotificationLogger.THREAD_NOTIFICATION_LOGGER_CONTEXT_KEY;
 import static org.slf4j.LoggerFactory.getLogger;
 import static reactor.core.publisher.Flux.from;
-import static reactor.core.publisher.FluxSink.OverflowStrategy.BUFFER;
 import static reactor.core.publisher.Mono.subscriberContext;
 import static reactor.core.scheduler.Schedulers.fromExecutorService;
 
 import org.mule.runtime.api.exception.MuleException;
-import org.mule.runtime.api.exception.MuleRuntimeException;
 import org.mule.runtime.api.scheduler.Scheduler;
-import org.mule.runtime.api.util.concurrent.Latch;
+import org.mule.runtime.api.scheduler.SchedulerService;
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.construct.BackPressureReason;
-import org.mule.runtime.core.api.construct.FlowConstruct;
 import org.mule.runtime.core.api.event.CoreEvent;
 import org.mule.runtime.core.api.processor.ReactiveProcessor;
-import org.mule.runtime.core.api.processor.Sink;
+import org.mule.runtime.core.api.processor.strategy.AsyncProcessingStrategyFactory;
 import org.mule.runtime.core.api.processor.strategy.ProcessingStrategy;
 import org.mule.runtime.core.internal.context.thread.notification.ThreadLoggingExecutorServiceDecorator;
 import org.mule.runtime.core.internal.processor.chain.InterceptedReactiveProcessor;
+import org.mule.runtime.core.internal.processor.strategy.StreamEmitterProcessingStrategyFactory.StreamEmitterProcessingStrategy;
 import org.mule.runtime.core.internal.util.rx.RejectionCallbackExecutorServiceDecorator;
 import org.mule.runtime.core.internal.util.rx.RetrySchedulerWrapper;
 import org.mule.runtime.core.privileged.event.BaseEventContext;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
-import java.util.function.IntUnaryOperator;
 import java.util.function.LongUnaryOperator;
 import java.util.function.Supplier;
 
 import org.slf4j.Logger;
-import reactor.core.publisher.EmitterProcessor;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+/**
+ * Creates {@link AsyncProcessingStrategyFactory} instance that implements the proactor pattern by
+ * de-multiplexing incoming events onto a multiple emitter using the {@link SchedulerService#cpuLightScheduler()} to process these
+ * events from each emitter. In contrast to the {@link AbstractStreamProcessingStrategyFactory} the proactor pattern treats
+ * {@link ReactiveProcessor.ProcessingType#CPU_INTENSIVE} and {@link ReactiveProcessor.ProcessingType#BLOCKING} processors differently and schedules there execution
+ * on dedicated {@link SchedulerService#cpuIntensiveScheduler()} and {@link SchedulerService#ioScheduler()} ()} schedulers.
+ * <p/>
+ * This processing strategy is not suitable for transactional flows and will fail if used with an active transaction.
+ *
+ * @since 4.2.0
+ */
 public class ProactorStreamEmitterProcessingStrategyFactory extends AbstractStreamProcessingStrategyFactory {
 
   @Override
@@ -85,7 +87,7 @@ public class ProactorStreamEmitterProcessingStrategyFactory extends AbstractStre
     return ProactorStreamEmitterProcessingStrategy.class;
   }
 
-  static class ProactorStreamEmitterProcessingStrategy extends AbstractReactorStreamProcessingStrategy {
+  static class ProactorStreamEmitterProcessingStrategy extends StreamEmitterProcessingStrategy {
 
     private static final Logger LOGGER = getLogger(ProactorStreamEmitterProcessingStrategy.class);
     private static final long SCHEDULER_BUSY_RETRY_INTERVAL_NS = MILLISECONDS.toNanos(SCHEDULER_BUSY_RETRY_INTERVAL_MS);
@@ -99,10 +101,9 @@ public class ProactorStreamEmitterProcessingStrategyFactory extends AbstractStre
       } catch (ClassNotFoundException e) {
         LOGGER.debug("OperationMessageProcessor interface not available in current context", e);
       }
-
     }
 
-    private final int bufferSize;
+
     private final boolean isThreadLoggingEnabled;
     private final Supplier<Scheduler> blockingSchedulerSupplier;
     private final Supplier<Scheduler> cpuIntensiveSchedulerSupplier;
@@ -127,8 +128,7 @@ public class ProactorStreamEmitterProcessingStrategyFactory extends AbstractStre
                                                    int maxConcurrency,
                                                    boolean maxConcurrencyEagerCheck,
                                                    boolean isThreadLoggingEnabled) {
-      super(subscriberCount, cpuLightSchedulerSupplier, parallelism, maxConcurrency, maxConcurrencyEagerCheck);
-      this.bufferSize = bufferSize;
+      super(bufferSize, subscriberCount, cpuLightSchedulerSupplier, parallelism, maxConcurrency, maxConcurrencyEagerCheck);
       this.blockingSchedulerSupplier = blockingSchedulerSupplier;
       this.cpuIntensiveSchedulerSupplier = cpuIntensiveSchedulerSupplier;
       this.isThreadLoggingEnabled = isThreadLoggingEnabled;
@@ -206,39 +206,6 @@ public class ProactorStreamEmitterProcessingStrategyFactory extends AbstractStre
                 .subscriberContext(ctx -> ctx.put(PROCESSOR_SCHEDULER_CONTEXT_KEY, scheduler)),
                      max(maxConcurrency / (getParallelism() * subscribers), 1));
       }
-    }
-
-    @Override
-    public Sink createSink(FlowConstruct flowConstruct, ReactiveProcessor function) {
-      final long shutdownTimeout = flowConstruct.getMuleContext().getConfiguration().getShutdownTimeout();
-      final int sinksCount = maxConcurrency < CORES ? maxConcurrency : CORES;
-      List<ReactorSink<CoreEvent>> sinks = new ArrayList<>();
-
-      for (int i = 0; i < sinksCount; i++) {
-        Latch completionLatch = new Latch();
-        EmitterProcessor<CoreEvent> processor = EmitterProcessor.create(getBufferQueueSize());
-        processor.transform(function).subscribe(null, e -> completionLatch.release(), () -> completionLatch.release());
-
-        if (!processor.hasDownstreams()) {
-          throw new MuleRuntimeException(createStaticMessage("No subscriptions active for processor."));
-        }
-
-        ReactorSink<CoreEvent> sink =
-            new DefaultReactorSink<>(processor.sink(BUFFER),
-                                     () -> awaitSubscribersCompletion(flowConstruct, shutdownTimeout, completionLatch,
-                                                                      currentTimeMillis()),
-                                     createOnEventConsumer(), getBufferQueueSize());
-        sinks.add(sink);
-      }
-
-      return new RoundRobinReactorSink<>(sinks);
-    }
-
-    @Override
-    public ReactiveProcessor onPipeline(ReactiveProcessor pipeline) {
-      reactor.core.scheduler.Scheduler scheduler = fromExecutorService(decorateScheduler(getCpuLightScheduler()));
-      return publisher -> from(publisher).publishOn(scheduler)
-          .doOnSubscribe(subscription -> currentThread().setContextClassLoader(executionClassloader)).transform(pipeline);
     }
 
     private Mono<CoreEvent> scheduleProcessor(ReactiveProcessor processor, ScheduledExecutorService processorScheduler,
@@ -325,45 +292,8 @@ public class ProactorStreamEmitterProcessingStrategyFactory extends AbstractStre
     }
 
     @Override
-    protected int getBufferQueueSize() {
-      return bufferSize / (maxConcurrency < CORES ? maxConcurrency : CORES);
-    }
-
-    static class RoundRobinReactorSink<E> implements AbstractProcessingStrategy.ReactorSink<E> {
-
-      private final List<AbstractProcessingStrategy.ReactorSink<E>> fluxSinks;
-      private final AtomicInteger index = new AtomicInteger(0);
-      // Saving update function to avoid creating the lambda every time
-      private final IntUnaryOperator update;
-
-      public RoundRobinReactorSink(List<AbstractProcessingStrategy.ReactorSink<E>> sinks) {
-        this.fluxSinks = sinks;
-        this.update = (value) -> (value + 1) % fluxSinks.size();
-      }
-
-      @Override
-      public void dispose() {
-        fluxSinks.stream().forEach(sink -> sink.dispose());
-      }
-
-      @Override
-      public void accept(CoreEvent event) {
-        fluxSinks.get(nextIndex()).accept(event);
-      }
-
-      private int nextIndex() {
-        return index.getAndUpdate(update);
-      }
-
-      @Override
-      public BackPressureReason emit(CoreEvent event) {
-        return fluxSinks.get(nextIndex()).emit(event);
-      }
-
-      @Override
-      public E intoSink(CoreEvent event) {
-        return (E) event;
-      }
+    protected Scheduler getFlowDispatcherScheduler() {
+      return getCpuLightScheduler();
     }
   }
 }

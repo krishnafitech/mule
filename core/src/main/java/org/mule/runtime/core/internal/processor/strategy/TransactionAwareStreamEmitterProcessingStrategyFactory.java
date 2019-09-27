@@ -8,7 +8,6 @@ package org.mule.runtime.core.internal.processor.strategy;
 
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.processor.strategy.ProcessingStrategy;
-import org.mule.runtime.core.internal.processor.strategy.StreamEmitterProcessingStrategyFactory.StreamEmitterProcessingStrategy;
 
 /**
  * Creates default processing strategy with same behavior as {@link ProactorStreamEmitterProcessingStrategyFactory} apart from the
@@ -16,7 +15,7 @@ import org.mule.runtime.core.internal.processor.strategy.StreamEmitterProcessing
  *
  * @since 4.0
  */
-public class TransactionAwareProactorStreamEmitterProcessingStrategyFactory extends ProactorStreamEmitterProcessingStrategyFactory
+public class TransactionAwareStreamEmitterProcessingStrategyFactory extends StreamEmitterProcessingStrategyFactory
     implements TransactionAwareProcessingStrategyFactory {
 
   @Override
